@@ -1,0 +1,1 @@
+Solana Scout iPad Web — reconstructed deployment package, not an exact copy of the earlier ZIP. Upload these files to a GitHub repository and deploy on Render as a Python web service. Build command: pip install -r requirements.txt. Start command: gunicorn app:app --bind 0.0.0.0:$PORT. No wallet needed. Data is from DexScreener public API; scanning is read-only.
