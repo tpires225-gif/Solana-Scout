@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
 import urllib.request, json, datetime, re
 app=Flask(__name__)
 BASE="https://api.dexscreener.com"
@@ -18,6 +18,20 @@ def lookup(address):
         return jsonify(pair=max(matches,key=lambda p:float((p.get("liquidity") or {}).get("usd") or 0)))
     except Exception:
         return jsonify(error="Lookup temporarily unavailable"), 503
+
+@app.post("/api/refresh")
+def refresh():
+    body=request.get_json(silent=True) or {}
+    addresses=body.get("addresses", [])
+    if not isinstance(addresses,list) or len(addresses)>150 or any(not isinstance(a,str) or not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}",a) for a in addresses):
+        return jsonify(error="Invalid token list"),400
+    addresses=list(dict.fromkeys(addresses))
+    pairs=[]; failures=[]
+    for i in range(0,len(addresses),30):
+        batch=addresses[i:i+30]
+        try: pairs.extend(fetch("/tokens/v1/solana/"+",".join(batch)))
+        except Exception: failures.extend(batch)
+    return jsonify(pairs=pairs,failed=failures,updated_utc=datetime.datetime.now(datetime.timezone.utc).isoformat())
 
 @app.get("/api/scan")
 def scan():
@@ -49,7 +63,7 @@ def scan():
         created=p.get("pairCreatedAt")
         age=(datetime.datetime.now(datetime.timezone.utc).timestamp()*1000-created)/60000 if created else None
         score=(20 if liq>=50000 else 10 if liq>=10000 else 0)+(20 if vol>=100000 else 10 if vol>=20000 else 0)+(15 if buys>=100 and buys>sells else 7 if buys>sells else 0)+(15 if 5<=change<=80 else 6 if 0<change<150 else 0)+(15 if age is not None and 15<=age<=1440 else 5 if age is not None and age<=4320 else 0)
-        rows.append(dict(name=p.get("baseToken",{}).get("name",""),buy_sell_ratio=round(buys/max(sells,1),2),symbol=p.get("baseToken",{}).get("symbol","?"),address=a,liquidity=liq,cap=cap,volume=vol,buys=buys,sells=sells,change=change,age=round(age) if age is not None else None,score=score,status="THIN LIQUIDITY" if liq<10000 else "WATCH" if score>=65 else "MONITOR" if score>=40 else "LOW DATA",url=p.get("url","")))
+        rows.append(dict(pair_address=p.get("pairAddress",""),dex_id=p.get("dexId",""),updated_utc=datetime.datetime.now(datetime.timezone.utc).isoformat(),stale=False,name=p.get("baseToken",{}).get("name",""),buy_sell_ratio=round(buys/max(sells,1),2),symbol=p.get("baseToken",{}).get("symbol","?"),address=a,liquidity=liq,cap=cap,volume=vol,buys=buys,sells=sells,change=change,age=round(age) if age is not None else None,score=score,status="THIN LIQUIDITY" if liq<10000 else "WATCH" if score>=65 else "MONITOR" if score>=40 else "LOW DATA",url=p.get("url","")))
     if not rows and errors: return jsonify(error="Unable to retrieve fresh DexScreener data"),503
     return jsonify(rows=sorted(rows,key=lambda x:x["score"],reverse=True),
                    updated_utc=datetime.datetime.now(datetime.timezone.utc).isoformat(),
